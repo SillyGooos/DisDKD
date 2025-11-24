@@ -136,88 +136,85 @@ class Trainer:
         print("PHASE 1: Discriminator Warmup")
         print("=" * 60)
 
+        # Prepare optimizers for both phases up front since we will alternate
+        # between Phase 1 and Phase 2 for the first 10 epochs.
         self.model.set_phase(1)
-        optimizer = self.model.get_phase1_optimizer(
+        phase1_optimizer = self.model.get_phase1_optimizer(
             lr=phase1_lr, weight_decay=args.weight_decay
         )
 
-        phase1_epochs_run = 0
-        for epoch in range(phase1_max):
-            start_time = time.time()
-
-            losses, metrics = self._train_epoch_phase1(
-                train_loader, optimizer, global_epoch
-            )
-            disc_acc = metrics["disc_accuracy"]
-
-            # Log with phase info
-            losses["disdkd_phase"] = 1
-            losses["disc_acc"] = disc_acc * 100  # Convert to percentage
-            self.loss_tracker.log_epoch(global_epoch, "train", losses, 0.0)
-
-            elapsed = time.time() - start_time
-            print(
-                f'Epoch {global_epoch} [P1]: Disc Loss {losses["disc"]:.4f}, '
-                f"Disc Acc {disc_acc:.2%}, Time {elapsed:.1f}s"
-            )
-
-            global_epoch += 1
-            phase1_epochs_run += 1
-
-            # Early transition check
-            if disc_acc >= disc_acc_threshold and phase1_epochs_run >= phase1_min:
-                print(
-                    f"Discriminator converged (acc={disc_acc:.2%}), transitioning to Phase 2"
-                )
-                break
-
-        print(f"Phase 1 completed after {phase1_epochs_run} epochs")
-
-        # ========== PHASE 2: Adversarial Feature Alignment ==========
-        print("\n" + "=" * 60)
-        print("PHASE 2: Adversarial Feature Alignment")
-        print("=" * 60)
-
         self.model.set_phase(2)
-        optimizer = self.model.get_phase2_optimizer(
+        phase2_optimizer = self.model.get_phase2_optimizer(
             lr=phase2_lr, weight_decay=args.weight_decay
         )
 
+        phase1_epochs_run = 0
         phase2_epochs_run = 0
-        remaining_for_phase2 = min(
-            phase2_max, total_epochs - global_epoch - 5
-        )  # Reserve at least 5 for Phase 3
 
-        for epoch in range(remaining_for_phase2):
+        alternating_epochs = min(10, total_epochs)
+        print(
+            f"Alternating Phase 1 and Phase 2 for the first {alternating_epochs} epochs"
+        )
+
+        for cycle_epoch in range(alternating_epochs):
             start_time = time.time()
 
-            losses, metrics = self._train_epoch_phase2(
-                train_loader, optimizer, global_epoch
-            )
-            fool_rate = metrics["fool_rate"]
+            if cycle_epoch % 2 == 0:
+                # Phase 1 step
+                self.model.set_phase(1)
+                losses, metrics = self._train_epoch_phase1(
+                    train_loader, phase1_optimizer, global_epoch
+                )
+                disc_acc = metrics["disc_accuracy"]
 
-            # Log with phase info
-            losses["disdkd_phase"] = 2
-            losses["fool_rate"] = fool_rate * 100  # Convert to percentage
-            self.loss_tracker.log_epoch(global_epoch, "train", losses, 0.0)
+                # Log with phase info
+                losses["disdkd_phase"] = 1
+                losses["disc_acc"] = disc_acc * 100  # Convert to percentage
+                self.loss_tracker.log_epoch(global_epoch, "train", losses, 0.0)
 
-            elapsed = time.time() - start_time
-            print(
-                f'Epoch {global_epoch} [P2]: Adv Loss {losses["adversarial"]:.4f}, '
-                f"Fool Rate {fool_rate:.2%}, Time {elapsed:.1f}s"
-            )
+                elapsed = time.time() - start_time
+                print(
+                    f'Epoch {global_epoch} [P1]: Disc Loss {losses["disc"]:.4f}, '
+                    f"Disc Acc {disc_acc:.2%}, Time {elapsed:.1f}s"
+                )
+
+                phase1_epochs_run += 1
+
+                if disc_acc >= disc_acc_threshold and phase1_epochs_run >= phase1_min:
+                    print(
+                        f"Discriminator reached threshold during alternating schedule (acc={disc_acc:.2%})"
+                    )
+            else:
+                # Phase 2 step
+                self.model.set_phase(2)
+                losses, metrics = self._train_epoch_phase2(
+                    train_loader, phase2_optimizer, global_epoch
+                )
+                fool_rate = metrics["fool_rate"]
+
+                # Log with phase info
+                losses["disdkd_phase"] = 2
+                losses["fool_rate"] = fool_rate * 100  # Convert to percentage
+                self.loss_tracker.log_epoch(global_epoch, "train", losses, 0.0)
+
+                elapsed = time.time() - start_time
+                print(
+                    f'Epoch {global_epoch} [P2]: Adv Loss {losses["adversarial"]:.4f}, '
+                    f"Fool Rate {fool_rate:.2%}, Time {elapsed:.1f}s"
+                )
+
+                phase2_epochs_run += 1
+
+                if fool_rate >= fool_rate_threshold and phase2_epochs_run >= phase2_min:
+                    print(
+                        f"Feature fooling reached threshold during alternating schedule (fool_rate={fool_rate:.2%})"
+                    )
 
             global_epoch += 1
-            phase2_epochs_run += 1
 
-            # Early transition check
-            if fool_rate >= fool_rate_threshold and phase2_epochs_run >= phase2_min:
-                print(
-                    f"Feature alignment complete (fool_rate={fool_rate:.2%}), transitioning to Phase 3"
-                )
-                break
-
-        print(f"Phase 2 completed after {phase2_epochs_run} epochs")
+        print(
+            f"Phase 1 steps completed: {phase1_epochs_run}, Phase 2 steps completed: {phase2_epochs_run}"
+        )
 
         # ========== PHASE 3: DKD Fine-tuning ==========
         print("\n" + "=" * 60)
