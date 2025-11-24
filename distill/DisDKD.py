@@ -207,7 +207,15 @@ class DisDKD(nn.Module):
             self._freeze_discriminator()
             self._freeze_teacher_regressor()
             self._unfreeze_student_regressor()
-            self._unfreeze_student_up_to_layer_g()
+            layers_to_train = self._unfreeze_student_up_to_layer_g()
+
+            # Keep frozen modules in eval mode so dropout does not corrupt logits
+            self.discriminator.eval()
+            self.teacher_regressor.eval()
+            self.student_regressor.train()
+            self.teacher.eval()
+            self.student.eval()
+            self._set_student_train_mode_up_to_layer_g(layers_to_train)
 
             # Keep frozen modules in eval mode so dropout does not corrupt logits
             self.discriminator.eval()
@@ -220,6 +228,8 @@ class DisDKD(nn.Module):
             # Train: entire student
             # Discard: regressors and discriminator (handled separately)
             self._unfreeze_student_completely()
+            self.teacher.eval()
+            self.student.train()
 
     def _freeze_student_completely(self):
         """Freeze all student parameters."""
@@ -272,6 +282,21 @@ class DisDKD(nn.Module):
             f"Phase 2: Student trainable params: {trainable:,} / {total:,} "
             f"({100*trainable/total:.1f}%) - up to {guided_layer_key}"
         )
+
+        return layers_to_unfreeze
+
+    def _set_student_train_mode_up_to_layer_g(self, layers_to_unfreeze):
+        """Put only layers up to G in train mode; keep later layers in eval mode."""
+        if not hasattr(self.student, "model"):
+            # Fallback: default to train if model wrapper is missing
+            self.student.train()
+            return
+
+        for name, module in self.student.model.named_children():
+            if name.split(".")[0] in layers_to_unfreeze:
+                module.train()
+            else:
+                module.eval()
 
     def _freeze_student_regressor(self):
         for param in self.student_regressor.parameters():
