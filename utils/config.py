@@ -96,6 +96,12 @@ def parse_args():
         default=2.0,
         help="Weight for auxiliary feature matching loss during Phase 2",
     )
+    parser.add_argument(
+        "--disdkd_gradient_penalty",
+        type=float,
+        default=0.0,
+        help="Gradient penalty weight for discriminator (0.0 to disable)",
+    )
 
     # DKD hyperparameters
     parser.add_argument("--dkd_alpha", type=float, default=1.0, help="DKD TCKD weight")
@@ -206,6 +212,11 @@ def parse_args():
         type=float,
         default=0.1,
         help="Label smoothing factor for cross-entropy loss",
+    )
+    parser.add_argument(
+        "--disdkd_phase3_mixup",
+        action="store_true",
+        help="Enable mixup augmentation in Phase 3",
     )
     parser.add_argument("--tau", type=float, default=4.0, help="Temperature for KD")
 
@@ -345,6 +356,10 @@ def print_training_config(args):
         print(
             f"Feature preprocessing: noise std={args.disdkd_feature_noise_std}, "
             f"standardization={'off' if args.disdkd_disable_feature_norm else 'on'}"
+        )
+        print(
+            f"Regularization: gradient_penalty={args.disdkd_gradient_penalty}, "
+            f"phase3_mixup={'on' if args.disdkd_phase3_mixup else 'off'}"
         )
         print(f"\nPhase 1 (Discriminator Warmup):")
         print(

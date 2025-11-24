@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
+from torch.nn.utils import spectral_norm
 
 from utils.utils import get_module, count_params
 
@@ -81,10 +82,10 @@ class FeatureDiscriminator(nn.Module):
         self.discriminator = nn.Sequential(
             nn.Flatten(),
             nn.Dropout(0.5),
-            nn.Linear(hidden_channels * 2, hidden_channels),
+            spectral_norm(nn.Linear(hidden_channels * 2, hidden_channels)),
             nn.ReLU(inplace=True),
             nn.Dropout(0.5),
-            nn.Linear(hidden_channels, 1),
+            spectral_norm(nn.Linear(hidden_channels, 1)),
             # No Sigmoid - returns logits
         )
 
@@ -147,6 +148,7 @@ class DisDKD(nn.Module):
         normalize_hidden=True,
         phase2_match_weight=0.5,
         adversarial_weight=1.0,
+        gradient_penalty_weight=0.0,
     ):
         super(DisDKD, self).__init__()
         self.teacher = teacher
@@ -159,6 +161,7 @@ class DisDKD(nn.Module):
         self.normalize_hidden = normalize_hidden
         self.phase2_match_weight = phase2_match_weight
         self.adversarial_weight = adversarial_weight
+        self.gradient_penalty_weight = gradient_penalty_weight
 
         self.teacher_layer = teacher_layer
         self.student_layer = student_layer
@@ -204,7 +207,8 @@ class DisDKD(nn.Module):
             f"Feature preprocessing: noise std={feature_noise_std}, "
             f"standardization={'on' if normalize_hidden else 'off'}, "
             f"phase2_match_weight={phase2_match_weight}, "
-            f"adversarial_weight={adversarial_weight}"
+            f"adversarial_weight={adversarial_weight}, "
+            f"gradient_penalty={gradient_penalty_weight}"
         )
 
     def set_phase(self, phase):
@@ -505,14 +509,38 @@ class DisDKD(nn.Module):
             teacher_logits = self.discriminator(teacher_hidden)
             student_logits = self.discriminator(student_hidden)
 
-            # Labels
-            real_labels = torch.ones(batch_size, 1, device=x.device)
+            # Labels with one-sided label smoothing for stability
+            smoothing = 0.1
+            real_labels = torch.ones(batch_size, 1, device=x.device) * (1.0 - smoothing)
             fake_labels = torch.zeros(batch_size, 1, device=x.device)
 
             # Discriminator loss (BCEWithLogitsLoss handles sigmoid internally)
             disc_loss_real = self.bce_loss(teacher_logits, real_labels)
             disc_loss_fake = self.bce_loss(student_logits, fake_labels)
             disc_loss = (disc_loss_real + disc_loss_fake) / 2
+
+            # Optional gradient penalty to stabilize discriminator training
+            if (
+                self.training
+                and hasattr(self, "gradient_penalty_weight")
+                and self.gradient_penalty_weight > 0
+            ):
+                alpha = torch.rand(batch_size, 1, 1, 1, device=x.device)
+                interpolated = (
+                    alpha * teacher_hidden + (1 - alpha) * student_hidden
+                ).requires_grad_(True)
+
+                disc_interpolated = self.discriminator(interpolated)
+                gradients = torch.autograd.grad(
+                    outputs=disc_interpolated,
+                    inputs=interpolated,
+                    grad_outputs=torch.ones_like(disc_interpolated),
+                    create_graph=True,
+                    retain_graph=True,
+                )[0]
+                gradients = gradients.view(batch_size, -1)
+                gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+                disc_loss = disc_loss + self.gradient_penalty_weight * gradient_penalty
 
             # Compute accuracy for early stopping check using combined predictions
             with torch.no_grad():

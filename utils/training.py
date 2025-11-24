@@ -1,9 +1,11 @@
 import time
 from pathlib import Path
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 from tqdm import tqdm
 
 from utils.utils import accuracy, AverageMeter
@@ -225,11 +227,14 @@ class Trainer:
         self.model.discard_adversarial_components()
         self.model.set_phase(3)
         optimizer = self.model.get_phase3_optimizer(
-            lr=phase3_lr, weight_decay=args.weight_decay * 50
+            lr=phase3_lr, weight_decay=args.weight_decay * 5
         )
-        scheduler = StepLR(optimizer, step_size=args.step_size, gamma=args.lr_decay)
-
         remaining_epochs = total_epochs - global_epoch
+        scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=remaining_epochs,
+            eta_min=phase3_lr * 0.01,
+        )
         print(f"Phase 3 will run for {remaining_epochs} epochs")
 
         for epoch in range(remaining_epochs):
@@ -397,6 +402,24 @@ class Trainer:
 
         return losses, metrics
 
+    def mixup_data(self, x, y, alpha=0.2):
+        """Apply mixup augmentation."""
+        if alpha > 0:
+            lam = np.random.beta(alpha, alpha)
+        else:
+            lam = 1
+
+        batch_size = x.size(0)
+        index = torch.randperm(batch_size, device=x.device)
+
+        mixed_x = lam * x + (1 - lam) * x[index]
+        y_a, y_b = y, y[index]
+        return mixed_x, y_a, y_b, lam
+
+    def mixup_criterion(self, pred, y_a, y_b, lam):
+        """Compute mixup loss."""
+        return lam * self.criterion(pred, y_a) + (1 - lam) * self.criterion(pred, y_b)
+
     def _train_epoch_phase3(self, train_loader, optimizer, epoch):
         """Train full student with DKD for one epoch (Phase 3)."""
         # Keep the frozen teacher in eval mode while only the student trains
@@ -416,14 +439,26 @@ class Trainer:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             batch_size = inputs.size(0)
 
+            use_mixup = self.args.disdkd_phase3_mixup and np.random.rand() < 0.5
+            if use_mixup:
+                inputs, targets_a, targets_b, lam = self.mixup_data(inputs, targets, alpha=0.2)
+
             optimizer.zero_grad()
-            result = self.model(inputs, targets)
 
-            student_logits = result["student_logits"]
-            dkd_loss = result["dkd_loss"]
+            if use_mixup:
+                result_a = self.model(inputs, targets_a)
+                result_b = self.model(inputs, targets_b)
+                student_logits = result_a["student_logits"]
+                dkd_loss = lam * result_a["dkd_loss"] + (1 - lam) * result_b["dkd_loss"]
+                ce_loss = self.mixup_criterion(student_logits, targets_a, targets_b, lam)
+            else:
+                result = self.model(inputs, targets)
+                student_logits = result["student_logits"]
+                dkd_loss = result["dkd_loss"]
 
-            # CE + DKD
-            ce_loss = self.criterion(student_logits, targets)
+                # CE + DKD
+                ce_loss = self.criterion(student_logits, targets)
+
             total_loss = self.args.alpha * ce_loss + dkd_loss
 
             if not torch.isfinite(total_loss):
