@@ -216,7 +216,6 @@ class DisDKD(nn.Module):
         mmd = K_xx.mean() + K_yy.mean() - 2 * K_xy.mean()
         return mmd
 
-
     def set_phase(self, phase):
         """
         Set training phase and configure requires_grad accordingly.
@@ -510,7 +509,7 @@ class DisDKD(nn.Module):
         adv_loss = self.bce_loss(student_logits, real_labels)
 
         # ---- FINAL GENERATOR LOSS ----
-        gen_loss = adv_loss + self.mmd_weight * mmd
+        gen_loss = adv_loss + self.mmd_weight * mmd / (mmd.detach() + 1e-6)
 
         # Metrics
         with torch.no_grad():
@@ -526,7 +525,6 @@ class DisDKD(nn.Module):
             "mmd": mmd.item(),
             "fool_rate": fool_rate.item(),
         }
-
 
     def forward_phase2(self, x, targets):
         """
