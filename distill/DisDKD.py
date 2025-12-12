@@ -145,7 +145,7 @@ class DisDKD(nn.Module):
         alpha=1.0,
         beta=8.0,
         temperature=4.0,
-        mmd_weight= 1.0,
+        mmd_weight=0.05,
     ):
         super(DisDKD, self).__init__()
         self.teacher = teacher

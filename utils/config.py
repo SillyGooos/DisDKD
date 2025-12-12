@@ -151,6 +151,13 @@ def parse_args():
         default=1,
         help="Number of discriminator training steps per batch in Phase 1 (typically 1-2)",
     )
+    parser.add_argument(
+        "--disdkd_mmd_weight",
+        type=float,
+        default=0.05,
+        help="Base weight for MMD term in Phase 1 generator loss (will be ramped up over phase1 epochs)",
+    )
+
 
     # Legacy DisDKD args (kept for backward compatibility)
     parser.add_argument(
@@ -324,6 +331,7 @@ def print_training_config(args):
         print(f"  Discriminator LR: {args.disdkd_phase1_lr}")
         print(f"  Generator LR: {args.disdkd_phase2_lr}")
         print(f"  Student trains: layers up to and including '{args.student_layer}'")
+        print(f"  MMD base weight: {getattr(args, 'disdkd_mmd_weight', 0.05)} (ramped over Phase 1)")
         print(f"\nPhase 2 (DKD Fine-tuning):")
         remaining = args.epochs - args.disdkd_phase1_epochs
         print(f"  Epochs: {remaining}")
