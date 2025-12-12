@@ -1,3 +1,39 @@
+"""
+DisDKD: Discriminator-guided Decoupled Knowledge Distillation
+
+Training paradigm:
+    Phase 1 (Adversarial - first N epochs, e.g., 10):
+        Interleaved discriminator and generator training within each batch
+
+        for batch in loader:
+            # Train discriminator for k steps (typically k=1-2)
+            for _ in range(k):
+                model.set_discriminator_mode()
+                outputs = model(x, mode='discriminator')
+                loss = outputs['disc_loss']
+                loss.backward()
+                optimizer_D.step()
+
+            # Train generator for 1 step
+            model.set_generator_mode()
+            outputs = model(x, mode='generator')
+            loss = outputs['gen_loss']
+            loss.backward()
+            optimizer_G.step()
+
+    Phase 2 (DKD - remaining epochs):
+        Standard DKD training on entire student
+
+        model.set_phase(2)
+        model.discard_adversarial_components()
+
+        for batch in loader:
+            outputs = model(x, targets)
+            loss = outputs['dkd_loss']
+            loss.backward()
+            optimizer_DKD.step()
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -63,14 +99,10 @@ class FeatureDiscriminator(nn.Module):
 
         self.discriminator = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(hidden_channels, hidden_channels // 2),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_channels // 2, hidden_channels // 4),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_channels // 4, 1),
-            # No Sigmoid - returns logits
+            nn.Linear(hidden_channels, hidden_channels // 2, bias=False),
+            nn.BatchNorm1d(hidden_channels // 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(hidden_channels // 2, 1)
         )
 
     def forward(self, x):
@@ -81,11 +113,13 @@ class FeatureDiscriminator(nn.Module):
 
 class DisDKD(nn.Module):
     """
-    Discriminator-enhanced Decoupled Knowledge Distillation (Three-Phase).
+    Discriminator-enhanced Decoupled Knowledge Distillation (Two-Phase with Interleaved Training).
 
-    Phase 1: Pretrain discriminator and teacher regressor (student frozen)
-    Phase 2: Adversarial feature alignment (student up to layer G, discriminator frozen)
-    Phase 3: DKD fine-tuning (entire student, regressors/discriminator discarded)
+    Phase 1 (Adversarial): Interleaved discriminator and generator training
+        - Within each batch: Train D for k steps, then train G (student) for 1 step
+        - Discriminator learns to distinguish teacher vs student features
+        - Student (up to layer G) learns to fool discriminator
+    Phase 2 (DKD): Pure DKD fine-tuning (entire student, regressors/discriminator discarded)
 
     Args:
         teacher (nn.Module): Pretrained teacher network
@@ -146,7 +180,7 @@ class DisDKD(nn.Module):
         # BCE loss with logits for discriminator
         self.bce_loss = nn.BCEWithLogitsLoss()
 
-        # Track current phase (1, 2, or 3)
+        # Track current phase (1=adversarial interleaved, 2=DKD)
         self.current_phase = 1
 
         # Track if adversarial components are active
@@ -165,32 +199,20 @@ class DisDKD(nn.Module):
         """
         Set training phase and configure requires_grad accordingly.
 
-        Phase 1: Train discriminator + teacher_regressor (student frozen)
-        Phase 2: Train student (up to layer G) + student_regressor (discriminator frozen)
-        Phase 3: Train entire student with DKD (adversarial components discarded)
+        Phase 1: Adversarial (interleaved D/G training)
+            - Discriminator and generator training alternate within each batch
+            - Use set_discriminator_mode() and set_generator_mode() to switch
+        Phase 2: DKD fine-tuning (entire student, adversarial components discarded)
         """
-        assert phase in [1, 2, 3], "Phase must be 1, 2, or 3"
+        assert phase in [1, 2], "Phase must be 1 (adversarial) or 2 (DKD)"
         self.current_phase = phase
 
         if phase == 1:
-            # Freeze: entire student, student_regressor
-            # Train: discriminator, teacher_regressor
-            self._freeze_student_completely()
-            self._freeze_student_regressor()
-            self._unfreeze_discriminator()
-            self._unfreeze_teacher_regressor()
+            # Phase 1: Adversarial - start in discriminator mode
+            self.set_discriminator_mode()
 
         elif phase == 2:
-            # Freeze: discriminator, teacher_regressor, student layers after G
-            # Train: student (up to G), student_regressor
-            self._freeze_discriminator()
-            self._freeze_teacher_regressor()
-            self._unfreeze_student_regressor()
-            self._unfreeze_student_up_to_layer_g()
-
-        elif phase == 3:
-            # Train: entire student
-            # Discard: regressors and discriminator (handled separately)
+            # Phase 2: DKD - train entire student
             self._unfreeze_student_completely()
 
     def _freeze_student_completely(self):
@@ -269,9 +291,31 @@ class DisDKD(nn.Module):
         for param in self.teacher_regressor.parameters():
             param.requires_grad = True
 
+    def set_discriminator_mode(self):
+        """
+        Configure for discriminator training step in Phase 1.
+        Freeze: student (entire), student_regressor
+        Train: discriminator, teacher_regressor
+        """
+        self._freeze_student_completely()
+        self._freeze_student_regressor()
+        self._unfreeze_discriminator()
+        self._unfreeze_teacher_regressor()
+
+    def set_generator_mode(self):
+        """
+        Configure for generator (student) training step in Phase 1.
+        Freeze: discriminator, teacher_regressor, student layers after G
+        Train: student (up to layer G), student_regressor
+        """
+        self._freeze_discriminator()
+        self._freeze_teacher_regressor()
+        self._unfreeze_student_regressor()
+        self._unfreeze_student_up_to_layer_g()
+
     def discard_adversarial_components(self):
         """
-        Remove hooks and delete adversarial components for Phase 3.
+        Remove hooks and delete adversarial components for Phase 2 (DKD).
         Frees memory and ensures clean DKD training.
         """
         if not self.adversarial_components_active:
@@ -291,7 +335,7 @@ class DisDKD(nn.Module):
         self.discriminator = None
         self.adversarial_components_active = False
 
-        print("Phase 3: Adversarial components discarded")
+        print("Phase 2: Adversarial components discarded for DKD training")
 
     def match_spatial_dimensions(self, student_feat, teacher_feat):
         """Match spatial dimensions via interpolation."""
@@ -353,11 +397,13 @@ class DisDKD(nn.Module):
         rt = torch.cat([t1, t2], dim=1)
         return rt
 
-    def forward_phase1(self, x):
+    def discriminator_step(self, x):
         """
-        Phase 1: Train discriminator to distinguish teacher (1) from student (0).
-        Student is completely frozen.
-        Discriminator outputs logits, not probabilities.
+        Discriminator training step for Phase 1 (adversarial).
+        Train discriminator to distinguish teacher (1) from student (0).
+        Call this with discriminator mode enabled (use set_discriminator_mode()).
+
+        Returns dict with disc_loss and metrics.
         """
         batch_size = x.size(0)
 
@@ -391,9 +437,9 @@ class DisDKD(nn.Module):
         disc_loss_fake = self.bce_loss(student_logits, fake_labels)
         disc_loss = (disc_loss_real + disc_loss_fake) / 2
 
-        # Compute accuracy for early stopping check
+        # Compute accuracy
         with torch.no_grad():
-            teacher_pred = torch.sigmoid(teacher_logits)  # Convert to probabilities
+            teacher_pred = torch.sigmoid(teacher_logits)
             student_pred = torch.sigmoid(student_logits)
             teacher_correct = (teacher_pred > 0.5).float().sum()
             student_correct = (student_pred < 0.5).float().sum()
@@ -410,11 +456,13 @@ class DisDKD(nn.Module):
             "student_pred_mean": student_pred.mean().item(),
         }
 
-    def forward_phase2(self, x):
+    def generator_step(self, x):
         """
-        Phase 2: Train student (up to layer G) to fool frozen discriminator.
-        Pure adversarial, no CE loss (frozen fc produces meaningless logits).
-        Discriminator outputs logits, not probabilities.
+        Generator (student) training step for Phase 1 (adversarial).
+        Train student (up to layer G) to fool frozen discriminator.
+        Call this with generator mode enabled (use set_generator_mode()).
+
+        Returns dict with gen_loss and metrics.
         """
         batch_size = x.size(0)
 
@@ -438,11 +486,11 @@ class DisDKD(nn.Module):
         # Adversarial loss: student wants to be classified as teacher (1)
         student_logits = self.discriminator(student_hidden)
         real_labels = torch.ones(batch_size, 1, device=x.device)
-        adversarial_loss = self.bce_loss(student_logits, real_labels)
+        gen_loss = self.bce_loss(student_logits, real_labels)
 
-        # Compute fool rate for early stopping check
+        # Compute fool rate
         with torch.no_grad():
-            student_pred = torch.sigmoid(student_logits)  # Convert to probabilities
+            student_pred = torch.sigmoid(student_logits)
             fool_rate = (student_pred > 0.5).float().mean()
 
         # Clear hooks
@@ -450,15 +498,15 @@ class DisDKD(nn.Module):
         self.student_hooks.clear()
 
         return {
-            "adversarial_loss": adversarial_loss,
+            "gen_loss": gen_loss,
             "fool_rate": fool_rate.item(),
             "student_pred_mean": student_pred.mean().item(),
         }
 
-    def forward_phase3(self, x, targets):
+    def forward_phase2(self, x, targets):
         """
-        Phase 3: Pure DKD training on entire student.
-        Adversarial components should be discarded before this.
+        Phase 2: Pure DKD training on entire student.
+        Adversarial components should be discarded before this phase.
         """
         # Forward pass
         with torch.no_grad():
@@ -474,37 +522,58 @@ class DisDKD(nn.Module):
             "dkd_loss": dkd_loss,
         }
 
-    def forward(self, x, targets=None):
+    def forward(self, x, targets=None, mode='discriminator'):
         """
         Forward pass that delegates to phase-specific methods.
+
+        Args:
+            x: Input tensor
+            targets: Ground truth labels (required for Phase 2/DKD)
+            mode: For Phase 1, specify 'discriminator' or 'generator' step
         """
         if self.current_phase == 1:
-            return self.forward_phase1(x)
+            # Phase 1: Adversarial (interleaved D/G)
+            if mode == 'discriminator':
+                return self.discriminator_step(x)
+            elif mode == 'generator':
+                return self.generator_step(x)
+            else:
+                raise ValueError(f"Invalid mode for Phase 1: {mode}. Use 'discriminator' or 'generator'")
         elif self.current_phase == 2:
-            return self.forward_phase2(x)
-        elif self.current_phase == 3:
+            # Phase 2: DKD
             if targets is None:
-                raise ValueError("Phase 3 requires targets for DKD loss")
-            return self.forward_phase3(x, targets)
+                raise ValueError("Phase 2 requires targets for DKD loss")
+            return self.forward_phase2(x, targets)
         else:
             raise ValueError(f"Invalid phase: {self.current_phase}")
 
-    def get_phase1_optimizer(self, lr=1e-3, weight_decay=1e-4):
-        """Get optimizer for Phase 1 (discriminator + teacher_regressor)."""
+    def get_discriminator_optimizer(self, lr=1e-4, weight_decay=1e-4):
+        """
+        Get optimizer for discriminator training in Phase 1 (adversarial).
+        Trains: discriminator + teacher_regressor
+        Default LR: 1e-4 (typical for discriminator training)
+        """
         params = list(self.discriminator.parameters()) + list(
             self.teacher_regressor.parameters()
         )
         return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
 
-    def get_phase2_optimizer(self, lr=1e-3, weight_decay=1e-4):
-        """Get optimizer for Phase 2 (student up to G + student_regressor)."""
+    def get_generator_optimizer(self, lr=1e-4, weight_decay=1e-4):
+        """
+        Get optimizer for generator (student) training in Phase 1 (adversarial).
+        Trains: student (up to layer G) + student_regressor
+        Default LR: 1e-4 or 5e-5 (typical for generator training)
+        """
         params = [p for p in self.student.parameters() if p.requires_grad] + list(
             self.student_regressor.parameters()
         )
         return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
 
-    def get_phase3_optimizer(self, lr=1e-4, weight_decay=1e-4):
-        """Get optimizer for Phase 3 (entire student)."""
+    def get_dkd_optimizer(self, lr=1e-4, weight_decay=1e-4):
+        """
+        Get optimizer for Phase 2 (DKD fine-tuning on entire student).
+        Trains: entire student network
+        """
         return torch.optim.Adam(
             self.student.parameters(), lr=lr, weight_decay=weight_decay
         )
