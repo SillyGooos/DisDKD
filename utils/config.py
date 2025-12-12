@@ -79,35 +79,6 @@ def parse_args():
         default=128,
         help="Hidden channels for feature transformation",
     )
-    parser.add_argument(
-        "--disdkd_feature_noise_std",
-        type=float,
-        default=0.05,
-        help="Gaussian noise std added to teacher hidden features for discriminator stability",
-    )
-    parser.add_argument(
-        "--disdkd_disable_feature_norm",
-        action="store_true",
-        help="Disable per-sample feature standardization before the discriminator",
-    )
-    parser.add_argument(
-        "--disdkd_phase2_match_weight",
-        type=float,
-        default=0.0,
-        help="Weight for auxiliary feature matching loss during Phase 2",
-    )
-    parser.add_argument(
-        "--disdkd_gradient_penalty",
-        type=float,
-        default=0.0,
-        help="Gradient penalty weight for discriminator (0.0 to disable)",
-    )
-    parser.add_argument(
-        "--disdkd_diversity_weight",
-        type=float,
-        default=0.0,
-        help="[DISABLED] Weight for feature diversity regularization during Phase 2",
-    )
 
     # DKD hyperparameters
     parser.add_argument("--dkd_alpha", type=float, default=1.0, help="DKD TCKD weight")
@@ -117,37 +88,37 @@ def parse_args():
     parser.add_argument(
         "--disdkd_phase1_epochs",
         type=int,
-        default=2,
+        default=3,
         help="Max epochs for Phase 1 (discriminator warmup)",
     )
     parser.add_argument(
         "--disdkd_phase2_epochs",
         type=int,
-        default=6,
+        default=7,
         help="Max epochs for Phase 2 (adversarial feature alignment)",
     )
     parser.add_argument(
         "--disdkd_phase1_min",
         type=int,
-        default=1,
+        default=2,
         help="Min epochs before early transition from Phase 1",
     )
     parser.add_argument(
         "--disdkd_phase2_min",
         type=int,
-        default=4,
+        default=3,
         help="Min epochs before early transition from Phase 2",
     )
     parser.add_argument(
         "--disdkd_disc_acc_threshold",
         type=float,
-        default=0.8,
+        default=0.95,
         help="Discriminator accuracy threshold for Phase 1 early exit",
     )
     parser.add_argument(
         "--disdkd_fool_rate_threshold",
         type=float,
-        default=0.88,
+        default=0.85,
         help="Fool rate threshold for Phase 2 early exit",
     )
     parser.add_argument(
@@ -212,17 +183,6 @@ def parse_args():
     parser.add_argument("--beta", type=float, default=0.4, help="KD loss weight")
     parser.add_argument(
         "--gamma", type=float, default=1.0, help="Method-specific loss weight"
-    )
-    parser.add_argument(
-        "--label_smoothing",
-        type=float,
-        default=0.1,
-        help="Label smoothing factor for cross-entropy loss",
-    )
-    parser.add_argument(
-        "--disdkd_phase3_mixup",
-        action="store_true",
-        help="Enable mixup augmentation in Phase 3",
     )
     parser.add_argument("--tau", type=float, default=4.0, help="Temperature for KD")
 
@@ -346,7 +306,6 @@ def print_training_config(args):
     print(
         f"Loss weights - α (CE): {args.alpha}, β (KD): {args.beta}, γ (method): {args.gamma}"
     )
-    print(f"Label smoothing: {args.label_smoothing}")
 
     if args.method == "DKD":
         print(f"DKD weights - TCKD α: {args.dkd_alpha}, NCKD β: {args.dkd_beta}")
@@ -359,14 +318,6 @@ def print_training_config(args):
         print(f"Hidden channels: {args.hidden_channels}")
         print(f"DKD weights - TCKD α: {args.dkd_alpha}, NCKD β: {args.dkd_beta}")
         print(f"Temperature: {args.tau}")
-        print(
-            f"Feature preprocessing: noise std={args.disdkd_feature_noise_std}, "
-            f"standardization={'off' if args.disdkd_disable_feature_norm else 'on'}"
-        )
-        print(
-            f"Regularization: gradient_penalty={args.disdkd_gradient_penalty}, "
-            f"phase3_mixup={'on' if args.disdkd_phase3_mixup else 'off'}"
-        )
         print(f"\nPhase 1 (Discriminator Warmup):")
         print(
             f"  Max epochs: {args.disdkd_phase1_epochs}, Min epochs: {args.disdkd_phase1_min}"
@@ -384,9 +335,6 @@ def print_training_config(args):
             f"  Early exit threshold: fool_rate >= {args.disdkd_fool_rate_threshold:.0%}"
         )
         print(f"  Student trains: layers up to and including '{args.student_layer}'")
-        print(
-            f"  Feature match weight: {args.disdkd_phase2_match_weight} (auxiliary MSE)"
-        )
         print(f"\nPhase 3 (DKD Fine-tuning):")
         remaining = args.epochs - args.disdkd_phase1_epochs - args.disdkd_phase2_epochs
         print(f"  Estimated epochs: ~{remaining} (depends on early exits)")
