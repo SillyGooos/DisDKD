@@ -441,6 +441,8 @@ class DisDKD(nn.Module):
         with torch.no_grad():
             t_pool = F.adaptive_avg_pool2d(teacher_hidden, 1).flatten(1)
             s_pool = F.adaptive_avg_pool2d(student_hidden, 1).flatten(1)
+            t_pool = F.normalize(t_pool, dim=1)
+            s_pool = F.normalize(s_pool, dim=1)
             mmd = self.compute_mmd(s_pool, t_pool)
 
         # Discriminator predictions (logits)
@@ -499,6 +501,8 @@ class DisDKD(nn.Module):
         # ---- MMD (GRADIENT FLOWS TO STUDENT) ----
         t_pool = F.adaptive_avg_pool2d(teacher_hidden, 1).flatten(1)
         s_pool = F.adaptive_avg_pool2d(student_hidden, 1).flatten(1)
+        t_pool = F.normalize(t_pool, dim=1)
+        s_pool = F.normalize(s_pool, dim=1)
         mmd = self.compute_mmd(s_pool, t_pool)
 
         # ---- Adversarial loss ----
