@@ -14,15 +14,19 @@ class LossTracker:
         if method == "DisDKD":
             headers = [
                 "epoch",
-                "disdkd_phase",  # 1, 2, or 3
+                "disdkd_phase",  # 1 (adversarial) or 2 (DKD)
                 "split",  # train or val
-                "disc_loss",  # Phase 1: discriminator BCE loss
-                "disc_acc",  # Phase 1: discriminator accuracy (%)
-                "adv_loss",  # Phase 2: adversarial loss
-                "fool_rate",  # Phase 2: fool rate (%)
-                "ce_loss",  # Phase 3: cross-entropy loss
-                "dkd_loss",  # Phase 3: DKD loss (TCKD + NCKD)
-                "total_loss",  # Total loss for the phase
+                # Phase 1 (adversarial) metrics
+                "disc_loss",  # Discriminator BCE loss
+                "disc_acc",  # Discriminator accuracy (%)
+                "gen_loss",  # Generator (adversarial) loss
+                "fool_rate",  # Generator fool rate (%)
+                "teacher_pred_mean",  # Mean teacher prediction (discriminator output)
+                "student_pred_mean",  # Mean student prediction (discriminator output)
+                # Phase 2 (DKD) metrics
+                "ce_loss",  # Cross-entropy loss
+                "dkd_loss",  # DKD loss (TCKD + NCKD)
+                "total_loss",  # Total loss for Phase 2
                 "accuracy",  # Classification accuracy (%)
             ]
         else:
@@ -61,20 +65,24 @@ class LossTracker:
             self._log_standard_epoch(epoch, phase, losses, accuracy)
 
     def _log_disdkd_epoch(self, epoch: int, split: str, losses: dict, accuracy: float):
-        """Log DisDKD-specific metrics."""
+        """Log DisDKD-specific metrics with fine granularity."""
         disdkd_phase = losses.get("disdkd_phase", 0)
 
         row = [
             epoch,
             disdkd_phase,
             split,
-            losses.get("disc", ""),  # Phase 1
-            losses.get("disc_acc", ""),  # Phase 1
-            losses.get("adversarial", ""),  # Phase 2
-            losses.get("fool_rate", ""),  # Phase 2
-            losses.get("ce", ""),  # Phase 3
-            losses.get("dkd", ""),  # Phase 3
-            losses.get("total", ""),
+            # Phase 1 (adversarial) metrics
+            losses.get("disc_loss", ""),
+            losses.get("disc_acc", ""),
+            losses.get("gen_loss", ""),
+            losses.get("fool_rate", ""),
+            losses.get("teacher_pred_mean", ""),
+            losses.get("student_pred_mean", ""),
+            # Phase 2 (DKD) metrics
+            losses.get("ce_loss", ""),
+            losses.get("dkd_loss", ""),
+            losses.get("total_loss", ""),
             accuracy if accuracy > 0 else "",
         ]
 

@@ -145,6 +145,12 @@ def parse_args():
         default=1.0,
         help="Weight for adversarial loss in Phase 2",
     )
+    parser.add_argument(
+        "--disdkd_k_disc_steps",
+        type=int,
+        default=1,
+        help="Number of discriminator training steps per batch in Phase 1 (typically 1-2)",
+    )
 
     # Legacy DisDKD args (kept for backward compatibility)
     parser.add_argument(
@@ -255,29 +261,22 @@ def validate_disdkd_config(args):
 
     total_epochs = args.epochs
     phase1 = args.disdkd_phase1_epochs
-    phase2 = args.disdkd_phase2_epochs
 
     # Check if phases fit within total epochs
-    min_phase3_epochs = 5
-    if phase1 + phase2 + min_phase3_epochs > total_epochs:
+    min_phase2_epochs = 10
+    if phase1 + min_phase2_epochs > total_epochs:
         print(f"\nWarning: DisDKD phase configuration may be tight!")
         print(f"  Total epochs: {total_epochs}")
-        print(f"  Phase 1 max: {phase1}")
-        print(f"  Phase 2 max: {phase2}")
-        print(f"  Remaining for Phase 3: {total_epochs - phase1 - phase2}")
-        print(f"  Consider increasing --epochs or reducing phase durations.\n")
+        print(f"  Phase 1 (adversarial): {phase1}")
+        print(f"  Remaining for Phase 2 (DKD): {total_epochs - phase1}")
+        print(f"  Recommended minimum Phase 2 epochs: {min_phase2_epochs}")
+        print(f"  Consider increasing --epochs or reducing Phase 1 duration.\n")
 
-    # Check early exit thresholds
-    if args.disdkd_disc_acc_threshold < 0.8:
+    # Validate k_disc_steps
+    if args.disdkd_k_disc_steps < 1 or args.disdkd_k_disc_steps > 5:
         print(
-            f"Warning: disdkd_disc_acc_threshold={args.disdkd_disc_acc_threshold} is low. "
-            f"Discriminator may not converge before Phase 2."
-        )
-
-    if args.disdkd_fool_rate_threshold < 0.7:
-        print(
-            f"Warning: disdkd_fool_rate_threshold={args.disdkd_fool_rate_threshold} is low. "
-            f"Feature alignment may be incomplete before Phase 3."
+            f"Warning: disdkd_k_disc_steps={args.disdkd_k_disc_steps} is unusual. "
+            f"Typical values are 1-2."
         )
 
 
@@ -311,35 +310,26 @@ def print_training_config(args):
         print(f"DKD weights - TCKD α: {args.dkd_alpha}, NCKD β: {args.dkd_beta}")
 
     elif args.method == "DisDKD":
-        print(f"\n--- DisDKD Three-Phase Configuration ---")
+        print(f"\n--- DisDKD Two-Phase Configuration (Interleaved Training) ---")
         print(
             f"Feature layers - Teacher: {args.teacher_layer}, Student: {args.student_layer}"
         )
         print(f"Hidden channels: {args.hidden_channels}")
         print(f"DKD weights - TCKD α: {args.dkd_alpha}, NCKD β: {args.dkd_beta}")
         print(f"Temperature: {args.tau}")
-        print(f"\nPhase 1 (Discriminator Warmup):")
-        print(
-            f"  Max epochs: {args.disdkd_phase1_epochs}, Min epochs: {args.disdkd_phase1_min}"
-        )
-        print(f"  LR: {args.disdkd_phase1_lr}")
-        print(
-            f"  Early exit threshold: disc_acc >= {args.disdkd_disc_acc_threshold:.0%}"
-        )
-        print(f"\nPhase 2 (Adversarial Feature Alignment):")
-        print(
-            f"  Max epochs: {args.disdkd_phase2_epochs}, Min epochs: {args.disdkd_phase2_min}"
-        )
-        print(f"  LR: {args.disdkd_phase2_lr}")
-        print(
-            f"  Early exit threshold: fool_rate >= {args.disdkd_fool_rate_threshold:.0%}"
-        )
+        print(f"\nPhase 1 (Adversarial - Interleaved D/G Training):")
+        print(f"  Epochs: {args.disdkd_phase1_epochs}")
+        print(f"  Discriminator steps per batch: {args.disdkd_k_disc_steps}")
+        print(f"  Generator steps per batch: 1")
+        print(f"  Discriminator LR: {args.disdkd_phase1_lr}")
+        print(f"  Generator LR: {args.disdkd_phase2_lr}")
         print(f"  Student trains: layers up to and including '{args.student_layer}'")
-        print(f"\nPhase 3 (DKD Fine-tuning):")
-        remaining = args.epochs - args.disdkd_phase1_epochs - args.disdkd_phase2_epochs
-        print(f"  Estimated epochs: ~{remaining} (depends on early exits)")
+        print(f"\nPhase 2 (DKD Fine-tuning):")
+        remaining = args.epochs - args.disdkd_phase1_epochs
+        print(f"  Epochs: {remaining}")
         print(f"  LR: {args.disdkd_phase3_lr}")
-        print(f"  Loss: CE + DKD (adversarial components discarded)")
+        print(f"  Loss: α*CE + β*DKD (adversarial components discarded)")
+        print(f"  CE weight (α): {args.alpha}, DKD weight (β): {args.beta}")
 
         # Validate configuration
         validate_disdkd_config(args)
