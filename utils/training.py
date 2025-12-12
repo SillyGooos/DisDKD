@@ -15,6 +15,7 @@ class Trainer:
         - Interleaved discriminator / generator updates
         - Proper BN handling (D.train(), D.eval())
         - Correct optimizer construction AFTER mode selection
+        - MMD tracking for feature alignment
 
     Phase 2:
         - Pure DKD fine-tuning
@@ -103,6 +104,8 @@ class Trainer:
                     "disc_acc": train_stats["disc_acc"],
                     "gen_loss": train_stats["gen_loss"],
                     "fool_rate": train_stats["fool_rate"],
+                    "mmd_d": train_stats["mmd_d"],
+                    "mmd_g": train_stats["mmd_g"],
                     "total": train_stats["disc_loss"] + train_stats["gen_loss"],
                 },
                 accuracy=0.0,
@@ -117,14 +120,16 @@ class Trainer:
                     "disc_acc": val_stats["disc_acc"],
                     "gen_loss": val_stats["gen_loss"],
                     "fool_rate": val_stats["fool_rate"],
+                    "mmd_d": val_stats["mmd_d"],
+                    "mmd_g": val_stats["mmd_g"],
                     "total": val_stats["disc_loss"] + val_stats["gen_loss"],
                 },
                 accuracy=0.0,
             )
 
-            print(f"\n{'='*60}")
+            print(f"\n{'='*70}")
             print(f"Epoch {epoch}/{phase1_epochs} [Phase 1] Summary")
-            print(f"{'='*60}")
+            print(f"{'='*70}")
             print(
                 f"Train | D_loss: {train_stats['disc_loss']:.4f}, "
                 f"D_acc: {train_stats['disc_acc']:.2f}%, "
@@ -132,12 +137,22 @@ class Trainer:
                 f"Fool: {train_stats['fool_rate']:.2f}%"
             )
             print(
+                f"      | MMD_D: {train_stats['mmd_d']:.4f}, "
+                f"MMD_G: {train_stats['mmd_g']:.4f}, "
+                f"Δ: {abs(train_stats['mmd_d'] - train_stats['mmd_g']):.4f}"
+            )
+            print(
                 f"Val   | D_loss: {val_stats['disc_loss']:.4f}, "
                 f"D_acc: {val_stats['disc_acc']:.2f}%, "
                 f"G_loss: {val_stats['gen_loss']:.4f}, "
                 f"Fool: {val_stats['fool_rate']:.2f}%"
             )
-            print(f"{'='*60}\n")
+            print(
+                f"      | MMD_D: {val_stats['mmd_d']:.4f}, "
+                f"MMD_G: {val_stats['mmd_g']:.4f}, "
+                f"Δ: {abs(val_stats['mmd_d'] - val_stats['mmd_g']):.4f}"
+            )
+            print(f"{'='*70}\n")
 
         # ------------------------------------------------------
         # Phase 2: DKD
@@ -147,6 +162,7 @@ class Trainer:
         print(f"PHASE 2: DKD Fine-tuning")
         print(f"  Epochs: {total_epochs - phase1_epochs}")
         print(f"  Learning rate: {self.args.disdkd_phase3_lr}")
+        print(f"  Final Phase 1 MMD: {train_stats['mmd_g']:.4f} (lower = better alignment)")
         print(f"{'='*60}\n")
 
         self.distill_model.set_phase(2)
@@ -240,7 +256,7 @@ class Trainer:
 
         num_batches = 0
 
-        pbar = tqdm(loader, desc=f"Epoch {epoch} [Phase 1] Train", ncols=120, leave=False)
+        pbar = tqdm(loader, desc=f"Epoch {epoch} [Phase 1] Train", ncols=140, leave=False)
 
         for x, _ in pbar:
             x = x.to(self.device)
@@ -294,7 +310,8 @@ class Trainer:
                     "D_acc": f"{100*disc_acc_sum/num_batches:.1f}%",
                     "G_loss": f"{gen_loss_sum/num_batches:.4f}",
                     "Fool": f"{100*fool_rate_sum/num_batches:.1f}%",
-                    "MMD_G": f"{mmd_g_sum/num_batches:.3f}",
+                    "MMD_D": f"{mmd_d_sum/num_batches:.4f}",
+                    "MMD_G": f"{mmd_g_sum/num_batches:.4f}",
                 }
             )
 
@@ -312,52 +329,52 @@ class Trainer:
     # ==========================================================
     # Phase 1 — validation (diagnostic only, read-only)
     # ==========================================================
-    
-    
+
     def _validate_epoch_phase1(self, loader, epoch):
         self.distill_model.eval()
         self.distill_model.discriminator.eval()
         self.distill_model.student.eval()
-    
+
         disc_loss_sum = 0.0
         disc_acc_sum = 0.0
         gen_loss_sum = 0.0
         fool_rate_sum = 0.0
         mmd_d_sum = 0.0
         mmd_g_sum = 0.0
-    
+
         num_batches = 0
-    
-        pbar = tqdm(loader, desc=f"Epoch {epoch} [Phase 1] Val", ncols=120, leave=False)
-    
+
+        pbar = tqdm(loader, desc=f"Epoch {epoch} [Phase 1] Val", ncols=140, leave=False)
+
         with torch.no_grad():
             for x, _ in pbar:
                 x = x.to(self.device)
-    
+
                 d = self.distill_model(x, mode="discriminator")
                 g = self.distill_model(x, mode="generator")
-    
+
                 disc_loss_sum += d["disc_loss"].item()
                 disc_acc_sum += d["disc_accuracy"]
                 gen_loss_sum += g["gen_loss"].item()
                 fool_rate_sum += g["fool_rate"]
                 mmd_d_sum += d["mmd"]
                 mmd_g_sum += g["mmd"]
-    
+
                 num_batches += 1
-    
+
                 pbar.set_postfix(
                     {
                         "D_loss": f"{disc_loss_sum/num_batches:.4f}",
                         "D_acc": f"{100*disc_acc_sum/num_batches:.1f}%",
                         "G_loss": f"{gen_loss_sum/num_batches:.4f}",
                         "Fool": f"{100*fool_rate_sum/num_batches:.1f}%",
-                        "MMD_G": f"{mmd_g_sum/num_batches:.3f}",
+                        "MMD_D": f"{mmd_d_sum/num_batches:.4f}",
+                        "MMD_G": f"{mmd_g_sum/num_batches:.4f}",
                     }
                 )
-    
+
         pbar.close()
-    
+
         return {
             "disc_loss": disc_loss_sum / num_batches,
             "disc_acc": 100 * disc_acc_sum / num_batches,
