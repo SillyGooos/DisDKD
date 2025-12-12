@@ -172,6 +172,8 @@ class DisDKD(nn.Module):
 
         # Feature regressors to project to common dimension
         self.teacher_regressor = FeatureRegressor(teacher_channels, hidden_channels)
+        for p in self.teacher_regressor.parameters():
+            p.requires_grad = False
         self.student_regressor = FeatureRegressor(student_channels, hidden_channels)
 
         # Feature discriminator
@@ -285,14 +287,6 @@ class DisDKD(nn.Module):
         for param in self.discriminator.parameters():
             param.requires_grad = True
 
-    def _freeze_teacher_regressor(self):
-        for param in self.teacher_regressor.parameters():
-            param.requires_grad = False
-
-    def _unfreeze_teacher_regressor(self):
-        for param in self.teacher_regressor.parameters():
-            param.requires_grad = True
-
     def set_discriminator_mode(self):
         """
         Configure for discriminator training step in Phase 1.
@@ -302,7 +296,6 @@ class DisDKD(nn.Module):
         self._freeze_student_completely()
         self._freeze_student_regressor()
         self._unfreeze_discriminator()
-        self._unfreeze_teacher_regressor()
 
     def set_generator_mode(self):
         """
@@ -311,7 +304,6 @@ class DisDKD(nn.Module):
         Train: student (up to layer G), student_regressor
         """
         self._freeze_discriminator()
-        self._freeze_teacher_regressor()
         self._unfreeze_student_regressor()
         self._unfreeze_student_up_to_layer_g()
 
@@ -555,9 +547,7 @@ class DisDKD(nn.Module):
         Trains: discriminator + teacher_regressor
         Default LR: 1e-4 (typical for discriminator training)
         """
-        params = list(self.discriminator.parameters()) + list(
-            self.teacher_regressor.parameters()
-        )
+        params = self.discriminator.parameters()
         return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
 
     def get_generator_optimizer(self, lr=1e-4, weight_decay=1e-4):
