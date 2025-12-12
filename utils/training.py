@@ -306,48 +306,51 @@ class Trainer:
     # ==========================================================
 
     def _validate_epoch_phase1(self, loader, epoch):
-        self.distill_model.eval()
-        self.distill_model.discriminator.eval()
-        self.distill_model.student.eval()
-
-        disc_loss_sum = 0.0
-        disc_acc_sum = 0.0
-        gen_loss_sum = 0.0
-        fool_rate_sum = 0.0
+        self.distill_model.eval()  # overall eval
+    
+        disc_loss_sum = disc_acc_sum = 0.0
+        gen_loss_sum = fool_rate_sum = 0.0
         num_batches = 0
-
+    
         pbar = tqdm(loader, desc=f"Epoch {epoch} [Phase 1] Val", ncols=120, leave=False)
-
+    
         with torch.no_grad():
             for x, _ in pbar:
                 x = x.to(self.device)
+    
+                # ----- Discriminator diagnostic -----
+                self.distill_model.set_discriminator_mode()
+                self.distill_model.discriminator.eval()
+                self.distill_model.student.eval()
                 d = self.distill_model(x, mode="discriminator")
+    
+                # ----- Generator diagnostic -----
+                self.distill_model.set_generator_mode()
+                self.distill_model.discriminator.eval()
+                self.distill_model.student.eval()  # keep eval for val consistency
                 g = self.distill_model(x, mode="generator")
-
+    
                 disc_loss_sum += d["disc_loss"].item()
-                disc_acc_sum += d["disc_accuracy"]
-                gen_loss_sum += g["gen_loss"].item()
+                disc_acc_sum  += d["disc_accuracy"]
+                gen_loss_sum  += g["gen_loss"].item()
                 fool_rate_sum += g["fool_rate"]
                 num_batches += 1
-
-                # Update progress bar
-                pbar.set_postfix(
-                    {
-                        "D_loss": f"{disc_loss_sum/num_batches:.4f}",
-                        "D_acc": f"{100*disc_acc_sum/num_batches:.1f}%",
-                        "G_loss": f"{gen_loss_sum/num_batches:.4f}",
-                        "Fool": f"{100*fool_rate_sum/num_batches:.1f}%",
-                    }
-                )
-
+    
+                pbar.set_postfix({
+                    "D_loss": f"{disc_loss_sum/num_batches:.4f}",
+                    "D_acc":  f"{100*disc_acc_sum/num_batches:.1f}%",
+                    "G_loss": f"{gen_loss_sum/num_batches:.4f}",
+                    "Fool":   f"{100*fool_rate_sum/num_batches:.1f}%",
+                })
+    
         pbar.close()
-
         return {
             "disc_loss": disc_loss_sum / num_batches,
-            "disc_acc": 100 * disc_acc_sum / num_batches,
-            "gen_loss": gen_loss_sum / num_batches,
+            "disc_acc":  100 * disc_acc_sum / num_batches,
+            "gen_loss":  gen_loss_sum / num_batches,
             "fool_rate": 100 * fool_rate_sum / num_batches,
         }
+
 
     # ==========================================================
     # Phase 2 — DKD

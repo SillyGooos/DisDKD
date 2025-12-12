@@ -423,8 +423,8 @@ class DisDKD(nn.Module):
         student_logits = self.discriminator(student_hidden.detach())
 
         # Labels
-        real_labels = torch.ones(batch_size, 1, device=x.device)
-        fake_labels = torch.zeros(batch_size, 1, device=x.device)
+        real_labels = torch.ones(batch_size, 1, device=x.device) - 0.1
+        fake_labels = torch.zeros(batch_size, 1, device=x.device) + 0.1
 
         # Discriminator loss (BCEWithLogitsLoss handles sigmoid internally)
         disc_loss_real = self.bce_loss(teacher_logits, real_labels)
