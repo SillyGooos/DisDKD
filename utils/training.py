@@ -133,7 +133,7 @@ class Trainer:
 			print(f"\n{'='*70}")
 			print(f"Epoch {epoch}/{phase1_epochs} [Phase 1] Summary")
 			print(f"{'='*70}")
-			print(f"mmd_weight = {base*ramp:.4f}")
+			# print(f"mmd_weight = {base*ramp:.4f}")
 			print(
 				f"Train | D_loss: {train_stats['disc_loss']:.4f}, "
 				f"D_acc: {train_stats['disc_acc']:.2f}%, "
@@ -259,10 +259,11 @@ class Trainer:
 		mmd_g_sum = 0.0
 		num_batches = 0
 
-		phase1_epochs = self.args.disdkd_phase1_epochs
+		# phase1_epochs = self.args.disdkd_phase1_epochs
 		base = getattr(self.args, "disdkd_mmd_weight", 0.05)
-		ramp = min(1.0, epoch / max(1, phase1_epochs))   # linear ramp
-		self.distill_model.mmd_weight = base * ramp
+		# ramp = min(1.0, epoch / max(1, phase1_epochs))   # linear ramp
+		# self.distill_model.mmd_weight = base * ramp
+		self.distill_model.mmd_weight = base
 
 		pbar = tqdm(loader, desc=f"Epoch {epoch} [Phase 1] Train", ncols=140, leave=False)
 
@@ -339,10 +340,11 @@ class Trainer:
 	# ==========================================================
 
 	def _validate_epoch_phase1(self, loader, epoch):
-		phase1_epochs = self.args.disdkd_phase1_epochs
+		# phase1_epochs = self.args.disdkd_phase1_epochs
 		base = getattr(self.args, "disdkd_mmd_weight", 0.05)
-		ramp = min(1.0, epoch / max(1, phase1_epochs))
-		self.distill_model.mmd_weight = base * ramp
+		# ramp = min(1.0, epoch / max(1, phase1_epochs))
+		# self.distill_model.mmd_weight = base * ramp
+		self.distill_model.mmd_weight = base 
 		self.distill_model.eval()
 		self.distill_model.discriminator.eval()
 		self.distill_model.student.eval()
