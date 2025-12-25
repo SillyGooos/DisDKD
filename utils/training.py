@@ -142,6 +142,8 @@ class Trainer:
     def _train_epoch_standard(self, train_loader, epoch):
         """Train for one epoch (standard methods)."""
         self.model.train()
+        if hasattr(self.model, "teacher"):
+            self.model.teacher.eval()
         meters = self._init_meters()
 
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch} Train", leave=False)
@@ -190,6 +192,8 @@ class Trainer:
     def _train_epoch_adversarial(self, train_loader, epoch):
         """Train for one epoch (adversarial methods: DisDKD)."""
         self.model.train()
+        if hasattr(self.model, "teacher"):
+            self.model.teacher.eval()
         meters = self._init_meters(adversarial=True)
 
         progress_bar = tqdm(
