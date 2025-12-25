@@ -82,7 +82,6 @@ class DKD(nn.Module):
         tckd_loss = (
             F.kl_div(log_pred_student_tckd, pred_teacher_tckd, reduction='batchmean')
             * (self.temperature ** 2)
-            / target.shape[0]
         )
         
         # Non-Target Class Knowledge Distillation (NCKD)
@@ -97,7 +96,6 @@ class DKD(nn.Module):
         nckd_loss = (
             F.kl_div(log_pred_student_nckd, pred_teacher_nckd, reduction='batchmean')
             * (self.temperature ** 2)
-            / target.shape[0]
         )
         
         # Combined DKD loss
